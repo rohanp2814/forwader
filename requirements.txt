@@ -3,3 +3,6 @@ Werkzeug>=2.2
 pyrogram
 tgcrypto
 telethon
+python-dotenv
+telethon
+flask
