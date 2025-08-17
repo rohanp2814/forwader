@@ -5,6 +5,7 @@ from telethon import TelegramClient, events
 import asyncio
 from flask import Flask
 import threading
+mport telethon
 from dotenv import load_dotenv
 
 # ================== LOAD .ENV ==================
