@@ -1,50 +1,83 @@
 # forward_bot.py
 
 import os
-import logging
-import asyncio
 from telethon import TelegramClient, events
+import asyncio
 from flask import Flask
+import threading
+from dotenv import load_dotenv
 
-# ---------------- Logging ----------------
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger("forwarder")
+# ================== LOAD .ENV ==================
+load_dotenv()
 
-# ---------------- Flask ----------------
+API_ID = int(os.getenv("API_ID"))
+API_HASH = os.getenv("API_HASH")
+SESSION_NAME = os.getenv("SESSION_NAME", "my_session")
+
+# Comma-separated list of source channels in .env
+SOURCE_CHANNELS = [
+    int(c.strip()) if c.strip().startswith("-") or c.strip().isdigit() else c.strip()
+    for c in os.getenv("SOURCE_CHANNELS", "").split(",")
+    if c.strip()
+]
+DEST_CHANNEL = int(os.getenv("DEST_CHANNEL")) if os.getenv("DEST_CHANNEL") else None
+# =================================================
+
 app = Flask(__name__)
 
 @app.route("/")
 def home():
-    return "✅ Telegram Forwarder Bot is running!"
+    return "Telegram Forwarder Bot is Running ✅"
 
-# ---------------- Env Variables ----------------
-API_ID = int(os.environ.get("API_ID"))
-API_HASH = os.environ.get("API_HASH")
-SESSION_NAME = os.environ.get("SESSION_NAME", "my_session")
 
-# Source channels: split env variable by comma into list
-SOURCE_CHANNELS = os.environ.get("SOURCE_CHANNELS", "").split(",")
-DEST_CHANNEL = os.environ.get("DEST_CHANNEL")
-
-# ---------------- Telegram Client ----------------
-client = TelegramClient(SESSION_NAME, API_ID, API_HASH)
-
-@client.on(events.NewMessage(chats=SOURCE_CHANNELS))
-async def handler(event):
-    try:
-        if event.message.media:  # forward only media files
-            await client.forward_messages(DEST_CHANNEL, event.message)
-            logger.info(f"Forwarded media from {event.chat_id} to {DEST_CHANNEL}")
-    except Exception as e:
-        logger.error(f"Error forwarding message: {e}")
-
-# ---------------- Main ----------------
-async def main():
+async def run_bot():
+    client = TelegramClient(f"sessions/{SESSION_NAME}", API_ID, API_HASH)
     await client.start()
-    logger.info("🚀 Forwarder Bot Started")
+    print("🚀 Bot is running... Forwarding media files automatically.")
+
+    # Resolve source channels
+    resolved_sources = []
+    for chat in SOURCE_CHANNELS:
+        try:
+            entity = await client.get_entity(chat)
+            resolved_sources.append(entity)
+            print(f"✅ Resolved source channel: {chat}")
+        except Exception as e:
+            print(f"❌ Could not resolve {chat} -> {e}")
+
+    # Resolve destination
+    try:
+        dest_entity = await client.get_entity(DEST_CHANNEL)
+        print(f"✅ Resolved destination channel: {DEST_CHANNEL}")
+    except Exception as e:
+        print(f"❌ Could not resolve destination {DEST_CHANNEL}: {e}")
+        return
+
+    @client.on(events.NewMessage(chats=resolved_sources))
+    async def handler(event):
+        try:
+            if event.media:
+                await client.forward_messages(dest_entity, event.message)
+                print(f"📩 Forwarded media from {event.chat_id} -> {DEST_CHANNEL}")
+            else:
+                print("⏩ Skipped non-media message.")
+        except Exception as e:
+            print("❌ Error forwarding:", e)
+
     await client.run_until_disconnected()
 
+
+def start_bot_loop():
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    loop.run_until_complete(run_bot())
+
+
 if __name__ == "__main__":
-    loop = asyncio.get_event_loop()
-    loop.create_task(main())
-    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
+    os.makedirs("sessions", exist_ok=True)  # keep sessions separate
+    # Run the bot in a separate thread
+    t = threading.Thread(target=start_bot_loop)
+    t.start()
+
+    # Run Flask app
+    app.run(host="0.0.0.0", port=int(os.getenv("PORT", 5000)))
